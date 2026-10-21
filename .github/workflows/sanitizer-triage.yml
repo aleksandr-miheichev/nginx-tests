@@ -41,20 +41,34 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev libio-socket-ssl-perl libsocket6-perl
-      - name: Establish unsuppressed UBSan baseline
+      - name: Build unchanged upstream with AddressSanitizer
         shell: bash
         run: |
           set -euo pipefail
-          ulimit -c 0
           mkdir -p results
           cd baseline
-          auto/configure --with-cc=clang --with-http_v2_module \
-            --without-http_rewrite_module --without-http_gzip_module \
-            --with-cc-opt="-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" \
-            --with-ld-opt="-fsanitize=address,undefined" > ../results/baseline-configure.log 2>&1
+          auto/configure --with-debug --with-cc=clang --with-http_ssl_module \
+            --with-http_v2_module --with-http_v3_module --with-http_realip_module \
+            --with-http_auth_request_module --with-http_stub_status_module \
+            --with-stream --with-stream_ssl_module \
+            --with-stream_ssl_preread_module --with-stream_realip_module \
+            --with-mail --with-mail_ssl_module --with-threads \
+            --with-cc-opt="-O1 -g -fsanitize=address -fno-omit-frame-pointer" \
+            --with-ld-opt="-fsanitize=address" > ../results/baseline-configure.log 2>&1
           make -j2 > ../results/baseline-build.log 2>&1
-          cd ..
-          python3 experiments/.github/experiments/ubsan_baseline_probe.py baseline/objs/nginx results/baseline-fixture > results/baseline-probe.log 2>&1
+          objs/nginx -V > ../results/baseline-version.txt 2>&1
+      - name: Record unchanged-source leak profile
+        env:
+          TEST_NGINX_CATLOG: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tests
+          export TEST_NGINX_BINARY="$GITHUB_WORKSPACE/baseline/objs/nginx"
+          mapfile -t files < <(find . -maxdepth 1 -name '*.t' -printf '%f\n' | grep -E '(^h2|^proxy_h2|^grpc|h2\.t$)' | sort)
+          rc=0
+          prove -v "${files[@]}" > ../results/baseline-lsan-suite.log 2>&1 || rc=$?
+          python3 ../experiments/.github/experiments/check_leak_profile.py "$rc" ../results/baseline-lsan-suite.log
       - name: Build exact candidate with AddressSanitizer
         shell: bash
         run: |
@@ -70,7 +84,9 @@ jobs:
             --with-ld-opt="-fsanitize=address" > ../results/candidate-configure.log 2>&1
           make -j2 > ../results/candidate-build.log 2>&1
           objs/nginx -V > ../results/version.txt 2>&1
-      - name: Run complete relevant protocol suite with ASan
+      - name: Run complete relevant protocol suite with ASan memory-access checks
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
         shell: bash
         run: |
           set -euo pipefail
@@ -79,6 +95,8 @@ jobs:
           mapfile -t files < <(find . -maxdepth 1 -name '*.t' -printf '%f\n' | grep -E '(^h2|^proxy_h2|^grpc|h2\.t$)' | sort)
           prove -v "${files[@]}" > ../results/asan-suite.log 2>&1
       - name: Check actual frame queue with ASan and unsuppressed UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
         shell: bash
         run: |
           set -euo pipefail
