@@ -7,6 +7,7 @@ on:
       - .github/experiments/ubsan_baseline_probe.py
 permissions:
   contents: read
+  actions: read
 jobs:
   sanitizers:
     runs-on: ubuntu-24.04
@@ -18,12 +19,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           path: experiments
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: nginx/nginx
-          ref: 140aa942711868a8daeb95810bc9a81f272ada72
-          path: baseline
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -41,34 +36,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev libio-socket-ssl-perl libsocket6-perl
-      - name: Build unchanged upstream with AddressSanitizer
+      - name: Validate preserved unchanged-source leak evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p results
-          cd baseline
-          auto/configure --with-debug --with-cc=clang --with-http_ssl_module \
-            --with-http_v2_module --with-http_v3_module --with-http_realip_module \
-            --with-http_auth_request_module --with-http_stub_status_module \
-            --with-stream --with-stream_ssl_module \
-            --with-stream_ssl_preread_module --with-stream_realip_module \
-            --with-mail --with-mail_ssl_module --with-threads \
-            --with-cc-opt="-O1 -g -fsanitize=address -fno-omit-frame-pointer" \
-            --with-ld-opt="-fsanitize=address" > ../results/baseline-configure.log 2>&1
-          make -j2 > ../results/baseline-build.log 2>&1
-          objs/nginx -V > ../results/baseline-version.txt 2>&1
-      - name: Record unchanged-source leak profile
-        env:
-          TEST_NGINX_CATLOG: "1"
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd tests
-          export TEST_NGINX_BINARY="$GITHUB_WORKSPACE/baseline/objs/nginx"
-          mapfile -t files < <(find . -maxdepth 1 -name '*.t' -printf '%f\n' | grep -E '(^h2|^proxy_h2|^grpc|h2\.t$)' | sort)
-          rc=0
-          prove -v "${files[@]}" > ../results/baseline-lsan-suite.log 2>&1 || rc=$?
-          python3 ../experiments/.github/experiments/check_leak_profile.py "$rc" ../results/baseline-lsan-suite.log
+          gh run download 39653425029 -R aleksandr-miheichev/nginx-tests \
+            -n sanitizer-triage -D results/baseline-evidence
+          python3 experiments/.github/experiments/check_leak_profile.py \
+            1 results/baseline-evidence/baseline-lsan-suite.log
       - name: Build exact candidate with AddressSanitizer
         shell: bash
         run: |

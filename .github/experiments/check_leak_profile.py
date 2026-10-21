@@ -2,7 +2,7 @@
 from pathlib import Path
 import re, sys
 status, logfile = sys.argv[1:]
-text = Path(logfile).read_text()
+text = Path(logfile).read_text(errors="replace")
 assert int(status) == 1, (status, text[-2500:])
 errors = re.findall(r"ERROR: ((?:AddressSanitizer|LeakSanitizer):[^\n]+)", text)
 assert errors and all(x.startswith("LeakSanitizer:") for x in errors), errors
