@@ -86,7 +86,7 @@ jobs:
           clang -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
             -Wall -Wextra -Werror -I src/core -I src/event -I src/event/modules \
             -I src/event/quic -I src/os/unix -I objs -I src/http -I src/http/modules \
-            -I src/http/v2 ../experiments/.github/experiments/h2_fifo_queue.c -o ../results/queue
+            -I src/http/v2 -I src/http/v3 ../experiments/.github/experiments/h2_fifo_queue.c -o ../results/queue
           ../results/queue > ../results/queue.log 2>&1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()

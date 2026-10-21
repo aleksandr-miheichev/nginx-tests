@@ -5,12 +5,14 @@ import os, socket, subprocess, sys, time
 binary = Path(sys.argv[1]).resolve()
 root = Path(sys.argv[2]).resolve()
 root.mkdir(parents=True, exist_ok=True)
+(root / "logs").mkdir(exist_ok=True)
 (root / "nginx.conf").write_text("""daemon off;
 master_process off;
 error_log stderr notice;
 pid nginx.pid;
 events {}
 http {
+    access_log off;
     server {
         listen 127.0.0.1:18080;
         http2 on;
@@ -19,7 +21,7 @@ http {
 """)
 logfile = root / "baseline-ubsan.log"
 with logfile.open("wb") as log:
-    process = subprocess.Popen([str(binary), "-p", str(root) + "/", "-c", "nginx.conf"],
+    process = subprocess.Popen([str(binary), "-p", str(root) + "/", "-c", "nginx.conf", "-e", "stderr"],
                                stdout=log, stderr=log)
     try:
         for _ in range(100):
