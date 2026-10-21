@@ -68,6 +68,9 @@ open my $out, '>', $ENV{SCHEDULER_RESULTS} or die $!;
 print $out JSON::PP->new->canonical->pretty->encode($output);
 close $out or die $!;
 
+$t->stop();
+undef $t;
+
 sub server_ticks {
 	my $pid = $t->read_file('nginx.pid');
 	chomp $pid;
