@@ -1,0 +1,179 @@
+name: HTTP2 scheduler investigation
+
+on:
+  push:
+    branches: [codex/h2-scheduler-experiments]
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: tests
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: nginx/nginx
+          ref: 140aa942711868a8daeb95810bc9a81f272ada72
+          path: nginx
+          persist-credentials: false
+      - name: Build all variants on the same runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          uname -a > results/environment.txt
+          gcc --version >> results/environment.txt
+          perl -V >> results/environment.txt
+          cd nginx
+          for variant in stock fifo incremental quota; do
+            git restore -- src/http/v2/ngx_http_v2.h src/http/v2/ngx_http_v2.c
+            python3 ../tests/.github/experiments/apply_variant.py "$variant"
+            git diff --binary > "../results/$variant.patch"
+            auto/configure --builddir="objs-$variant" --with-http_v2_module \
+              --without-http_rewrite_module --without-http_gzip_module \
+              --with-cc-opt=-O2 > "../results/configure-$variant.log" 2>&1
+            make -f "objs-$variant/Makefile" -j2 > "../results/build-$variant.log" 2>&1
+            gcc -O2 -Wall -Wextra -Werror -I src/core -I src/event \
+              -I src/event/modules -I src/event/quic -I src/os/unix \
+              -I "objs-$variant" -I src/http -I src/http/modules -I src/http/v2 \
+              ../tests/.github/experiments/h2_fifo_queue.c -o "../results/queue-$variant"
+            rc=0
+            "../results/queue-$variant" > "../results/queue-$variant.log" 2>&1 || rc=$?
+            case "$variant" in
+              stock|fifo) test "$rc" = 1 ;;
+              *) test "$rc" = 0 ;;
+            esac
+          done
+      - name: Compare schedules and validate complete payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tests
+          for round in 1 2 3; do
+            case "$round" in
+              1) variants="stock fifo incremental quota" ;;
+              2) variants="quota incremental fifo stock" ;;
+              3) variants="incremental stock quota fifo" ;;
+            esac
+            for variant in $variants; do
+              export TEST_NGINX_BINARY="$GITHUB_WORKSPACE/nginx/objs-$variant/nginx"
+              export SCHEDULER_VARIANT="$variant"
+              export SCHEDULER_RESULTS="$GITHUB_WORKSPACE/results/$variant-$round.json"
+              prove -v .github/experiments/compare.t > "../results/compare-$variant-$round.log" 2>&1
+            done
+          done
+      - name: Check differential regression failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tests
+          for variant in stock fifo incremental quota; do
+            export TEST_NGINX_BINARY="$GITHUB_WORKSPACE/nginx/objs-$variant/nginx"
+            rc=0
+            prove -v h2_priority_incremental.t > "../results/regression-$variant.log" 2>&1 || rc=$?
+            python3 .github/experiments/check_regression.py "$variant" "$rc" "../results/regression-$variant.log"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: scheduler-comparison
+          path: results/
+          retention-days: 30
+
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [gcc-full, clang-sanitizers]
+    env:
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: experiments
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: aleksandr-miheichev/nginx
+          ref: 120b5a16d5bb409484aac66bf66a3fd5c6cde64e
+          path: nginx
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: aleksandr-miheichev/nginx-tests
+          ref: a3102bc7ff84c61071fcfa7d717d9e9ff06f9cf2
+          path: tests
+          persist-credentials: false
+      - name: Install official suite prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcre2-dev libssl-dev zlib1g-dev \
+            libio-socket-ssl-perl libsocket6-perl
+      - name: Build exact candidate
+        env:
+          BUILD_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          cd nginx
+          extra=()
+          if [ "$BUILD_MODE" = clang-sanitizers ]; then
+            extra+=(--with-cc=clang
+              "--with-cc-opt=-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer"
+              "--with-ld-opt=-fsanitize=address,undefined")
+          fi
+          auto/configure --with-debug --with-http_ssl_module --with-http_v2_module \
+            --with-http_v3_module --with-http_realip_module --with-http_addition_module \
+            --with-http_sub_module --with-http_dav_module --with-http_flv_module \
+            --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module \
+            --with-http_auth_request_module --with-http_random_index_module \
+            --with-http_secure_link_module --with-http_degradation_module \
+            --with-http_stub_status_module --with-stream --with-stream_ssl_module \
+            --with-stream_ssl_preread_module --with-stream_realip_module \
+            --with-mail --with-mail_ssl_module --with-threads --with-file-aio \
+            "${extra[@]}" > ../results/configure.log 2>&1
+          make -j2 > ../results/build.log 2>&1
+          objs/nginx -V > ../results/nginx-version.txt 2>&1
+          git rev-parse HEAD > ../results/source-sha.txt
+          git -C ../tests rev-parse HEAD > ../results/tests-sha.txt
+      - name: Run regression suite
+        env:
+          BUILD_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tests
+          export TEST_NGINX_BINARY="$GITHUB_WORKSPACE/nginx/objs/nginx"
+          if [ "$BUILD_MODE" = gcc-full ]; then
+            prove -v . > ../results/suite.log 2>&1
+          else
+            mapfile -t files < <(find . -maxdepth 1 -name '*.t' -printf '%f\n' | grep -E '(^h2|^proxy_h2|^grpc|h2\.t$)' | sort)
+            prove -v "${files[@]}" > ../results/suite.log 2>&1
+          fi
+      - name: Exercise actual frame queue helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd nginx
+          cc -O2 -Wall -Wextra -Werror -I src/core -I src/event \
+            -I src/event/modules -I src/event/quic -I src/os/unix \
+            -I objs -I src/http -I src/http/modules -I src/http/v2 \
+            ../experiments/.github/experiments/h2_fifo_queue.c -o ../results/queue
+          ../results/queue > ../results/queue.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: candidate-${{ matrix.mode }}
+          path: results/
+          retention-days: 30
