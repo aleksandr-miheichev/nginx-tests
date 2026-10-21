@@ -66,6 +66,8 @@ jobs:
               export SCHEDULER_VARIANT="$variant"
               export SCHEDULER_RESULTS="$GITHUB_WORKSPACE/results/$variant-$round.json"
               prove -v .github/experiments/compare.t > "../results/compare-$variant-$round.log" 2>&1
+              export BACKPRESSURE_RESULTS="$GITHUB_WORKSPACE/results/backpressure-$variant-$round.json"
+              prove -v .github/experiments/backpressure.t > "../results/backpressure-$variant-$round.log" 2>&1
             done
           done
       - name: Check differential regression failures
