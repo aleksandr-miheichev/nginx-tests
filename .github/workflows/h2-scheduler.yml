@@ -1,4 +1,4 @@
-name: HTTP2 full fairness validation
+name: HTTP2 fairness validation
 
 on:
   workflow_dispatch:
@@ -11,12 +11,19 @@ on:
         description: Full candidate commit SHA in aleksandr-miheichev/nginx-tests
         required: true
         type: string
+      test_scope:
+        description: Full regression coverage or only the isolated TLS supplement
+        required: true
+        default: full
+        type: choice
+        options: [full, tls]
 
 permissions:
   contents: read
 
 jobs:
   validate:
+    name: ${{ inputs.test_scope }} / ${{ matrix.integration }} / ${{ matrix.mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -31,6 +38,7 @@ jobs:
       TESTS_SHA: ${{ inputs.tests_sha }}
       BUILD_MODE: ${{ matrix.mode }}
       INTEGRATION: ${{ matrix.integration }}
+      TEST_SCOPE: ${{ inputs.test_scope }}
     steps:
       - name: Validate immutable inputs
         shell: bash
@@ -38,6 +46,7 @@ jobs:
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$TESTS_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TEST_SCOPE" == full || "$TEST_SCOPE" == tls ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -69,7 +78,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: full-fairness-${{ matrix.integration }}-${{ matrix.mode }}
+          name: fairness-${{ inputs.test_scope }}-${{ matrix.integration }}-${{ matrix.mode }}
           path: results/
           if-no-files-found: warn
           retention-days: 30

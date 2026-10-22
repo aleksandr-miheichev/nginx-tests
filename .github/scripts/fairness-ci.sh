@@ -7,6 +7,11 @@ results="$PWD/results"
 source_dir="$PWD/nginx"
 tests_dir="$PWD/tests"
 ci_dir="$PWD/ci"
+: "${TEST_SCOPE:=full}"
+case "$TEST_SCOPE" in
+    full|tls) ;;
+    *) printf 'Unknown test scope: %s\n' "$TEST_SCOPE" >&2; exit 2 ;;
+esac
 
 # Preserve partial application/conflict evidence even if a cherry-pick fails.
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
@@ -38,6 +43,7 @@ git -C tests show --format=fuller --binary "$TESTS_SHA" > "$results/tests-candid
     printf 'source_candidate=%s\ntests_candidate=%s\n' "$SOURCE_SHA" "$TESTS_SHA"
     printf 'ci_commit=%s\n' "$(git -C ci rev-parse HEAD)"
     printf 'mode=%s\nintegration=%s\n' "$BUILD_MODE" "$INTEGRATION"
+    printf 'test_scope=%s\n' "$TEST_SCOPE"
     printf 'source_base=148c75678cd4171338c31d4ed4c02411736d5fe9\n'
     printf 'asan_options=%s\n' "$ASAN_OPTIONS"
     uname -a
@@ -80,6 +86,9 @@ for test_file in h2_fair_scheduling.t h2_fair_scheduling_proxy.t \
     h2_fair_scheduling_lifecycle.t h2_priority_incremental.t; do
     test -f "$tests_dir/$test_file"
 done
+if [[ "$TEST_SCOPE" == tls ]]; then
+    test -f "$tests_dir/h2_fair_scheduling_ssl.t"
+fi
 
 extra=()
 case "$BUILD_MODE" in
@@ -108,7 +117,10 @@ objs/nginx -V > "$results/nginx-version.txt" 2>&1
 
 cd "$tests_dir"
 export TEST_NGINX_BINARY="$source_dir/objs/nginx"
-if [[ "$BUILD_MODE" == gcc-full ]]; then
+if [[ "$TEST_SCOPE" == tls ]]; then
+    command=(prove -v h2_fair_scheduling_ssl.t)
+    printf '%s\n' h2_fair_scheduling_ssl.t > "$results/selected-tests.txt"
+elif [[ "$BUILD_MODE" == gcc-full ]]; then
     command=(prove -v .)
     printf '%s\n' ./*.t > "$results/selected-tests.txt"
 else
