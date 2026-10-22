@@ -1,0 +1,73 @@
+name: HTTP2 fairness bounded comparison
+
+# Install this file as the already-registered sanitizer-triage.yml on a CI-only branch.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Immutable final source candidate SHA
+        required: true
+        default: '740363964da592294415aeb1d2a53eb4bebfc30f'
+        type: string
+      tests_sha:
+        description: Immutable regression tests SHA
+        required: true
+        default: 'eca02a63e9ea60dacae5f78a2ba5b0e16a2fa937'
+        type: string
+      socket_measurements:
+        description: Include private socket-pressure diagnostics for stock/FIFO/final
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      LC_ALL: C
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      TESTS_SHA: ${{ inputs.tests_sha }}
+      RUN_SOCKET: ${{ inputs.socket_measurements }}
+    steps:
+      - name: Validate immutable inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TESTS_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: ci
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: aleksandr-miheichev/nginx
+          ref: ${{ inputs.source_sha }}
+          path: nginx
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: aleksandr-miheichev/nginx-tests
+          ref: ${{ inputs.tests_sha }}
+          path: tests
+          persist-credentials: false
+      - name: Install identical build prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libpcre2-dev zlib1g-dev libssl-dev
+      - name: Compare five source variants and kill posted-barrier mutant
+        shell: bash
+        run: python3 -B ci/.github/scripts/compare_fairness.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: fairness-bounded-comparison
+          path: comparison-results/
+          if-no-files-found: warn
+          retention-days: 30
