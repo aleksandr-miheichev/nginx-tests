@@ -187,7 +187,7 @@ def main():
             environment["FAIRNESS_TEST_LIB"] = str(test_tree / "lib")
             row["socket_exit_code"] = run(
                 ["perl", str(private_fixture), "--fair=" + ("off" if baseline else "on"),
-                 "--flow=socket",
+                 "--flow=socket", "--size=1048576",
                  "--output=" + str(out / "socket.ndjson")], out / "socket.log",
                 cwd=test_tree, env=environment, timeout=240)
             if variant == "final" and row["socket_exit_code"] != 0:
