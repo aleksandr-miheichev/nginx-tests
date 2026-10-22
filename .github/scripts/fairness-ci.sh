@@ -24,6 +24,9 @@ capture_trees() {
 }
 trap capture_trees EXIT
 
+python3 -B "$ci_dir/.github/scripts/test_summarize_prove.py" -v \
+    > "$results/parser-unit-tests.log" 2>&1
+
 test "$(git -C nginx rev-parse HEAD)" = "$SOURCE_SHA"
 test "$(git -C tests rev-parse HEAD)" = "$TESTS_SHA"
 test -z "$(git -C nginx status --porcelain)"
